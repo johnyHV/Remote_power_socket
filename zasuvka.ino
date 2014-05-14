@@ -2,6 +2,7 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SD.h>
+#include <avr/wdt.h>
 
 // Ethernet config
 //---------------------------------------------------------------------------------
@@ -37,7 +38,7 @@ String readString;        // ukladanie retazcov poziadavky
 #define button  9
 bool relay_status = false;
 bool button_s = false;
-cas a_time = {23,0,0};
+cas a_time = {22,25,0};
 cas time;
 cas dhcp_time = {0,0,0};
 uint8_t akcia = 0;
@@ -64,15 +65,11 @@ void setup() {
   if (!SD.begin(4)) 
     Serial.println("Failed initialize SD card"); */
   
-  //Serial.println("Getting IP adres wia DHCP");
-  //Ethernet.begin(mac, ip, brana, maska);
 //  if (Ethernet.begin(mac) == 0)
 //     Serial.println("Failed to configure Ethernet using DHCP");
      
   Ethernet.begin(mac);
   Serial.println(Ethernet.localIP());
-  get_time(&Udp,&dhcp_time);
-  
   
   // Configuration digital I/O
   pinMode(relay,OUTPUT);
@@ -85,31 +82,42 @@ void setup() {
   // Starting NTP,HTTP server
   Udp.begin(localPort);
   server.begin();
+  delay(10000);
+  get_time(&Udp,&dhcp_time);
+  wdt_enable(WDTO_8S);  // reset after one second, if no "pat the dog" received
 }
 
 void loop() {
+  wdt_reset();
   delay(100);
-  
-  if ((dhcp_time.hour == time.hour-1) && (dhcp_time.min == time.min)){
-    Ethernet.localIP();
-    get_time(&Udp,&dhcp_time);
-  }
   
   if (ntp_delay >= 150) {
     get_time(&Udp,&time);
     ntp_delay=0;
+    Serial.print(dhcp_time.hour);
+    Serial.println(dhcp_time.min);
+    
+    Serial.print(time.hour);
+    Serial.println(time.min);
+    
+    if ((time.hour == 0) && (dhcp_time.min == time.min)){
+      Serial.println(Ethernet.maintain());
+      dhcp_time.hour = time.hour;
+      dhcp_time.min = time.min;
+      Serial.println("Ziadam IP");
+    }
+    else {
+      if (((dhcp_time.hour+1) == time.hour) && (dhcp_time.min == time.min)){
+        Serial.println("Ziadam IP");
+        Serial.println(Ethernet.maintain());
+        dhcp_time.hour = time.hour;
+        dhcp_time.min = time.min;
+      }
+    }
   }
   else
     ntp_delay++;
-/*   
-  Serial.print(time.hour);
-  Serial.print(":");
-  Serial.print(time.min);
-  Serial.print(":");
-  Serial.println(time.sec);
-  Serial.println("Slucka");
-  Serial.println(ntp_delay);
-*/
+
   if (digitalRead(button) != button_s)
   {
     digitalWrite(relay,relay_status);
@@ -120,20 +128,24 @@ void loop() {
   if ((time.hour == a_time.hour)&&(time.min == a_time.min)&&(!stav)){
     //Serial.println("Cas sa naplnil");
     stav = true;
-    if (akcia == 0)
+    if (akcia == 0) {
       digitalWrite(relay,LOW);
-    else if (akcia == 1)
-      digitalWrite(relay,HIGH);
-    else if (akcia == 2)
-      digitalWrite(relay,relay_status);
-  }
-  else if ((time.hour == a_time.hour)&&(time.min != a_time.min)&&(stav)) {
-    if (akcia == 2) 
-      digitalWrite(relay,!relay_status);
-    stav = false;
-  }
+      relay_status=true;
+    }
+    else{ if (akcia == 1) {
+        digitalWrite(relay,HIGH);
+        relay_status=false;
+      }
+      else if (akcia == 2)
+        digitalWrite(relay,relay_status);
+      }
+    }
+    else if ((time.hour == a_time.hour)&&(time.min != a_time.min)&&(stav)) {
+      if (akcia == 2) 
+        digitalWrite(relay,!relay_status);
+      stav = false;
+    }
     
-
   EthernetClient client = server.available();
   if (client) {
     while (client.connected()) {
@@ -208,7 +220,6 @@ void loop() {
             }
           }
 
-            
           delay(10);
           client.stop();
           //clearing string for next read
@@ -220,6 +231,7 @@ void loop() {
 }
 
 void get_time(EthernetUDP *Udp,cas *time) {
+   wdt_reset();
    sendNTPpacket(timeServer); // send an NTP packet to a time server
 
      // wait to see if a reply is available
@@ -256,6 +268,7 @@ void get_time(EthernetUDP *Udp,cas *time) {
 }
 
 unsigned long sendNTPpacket(IPAddress& address){
+   wdt_reset();
    // set all bytes in the buffer to 0
    memset(packetBuffer, 0, NTP_PACKET_SIZE); 
    // Initialize values needed to form NTP request
@@ -279,6 +292,7 @@ unsigned long sendNTPpacket(IPAddress& address){
 
 void json_response(EthernetClient client)
 {
+  wdt_reset();
   //cas
   client.print("{\"hour\":\"");
   client.print(time.hour);
